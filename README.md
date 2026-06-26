@@ -4,7 +4,7 @@
 推力・姿勢・風を相手に、脚を展開してパッドへソフトランディングを狙います。
 ワンクリックで動く自律着陸モード（Auto Land）も搭載。
 
-**▶ プレイはこちら： https://&lt;Ki-math&gt;.github.io/&lt;Landing-game&gt;/**
+**▶ プレイはこちら： [https://&lt;Ki-math&gt;.github.io/&lt;Landing-game&gt;/**](https://ki-math.github.io/Landing-game/)
 
 ---
 
