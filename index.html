@@ -535,17 +535,38 @@ function tnorm(v, dz, span){              // デッドゾーン付き正規化 [
   if(a<=dz) return 0;
   return THREE.MathUtils.clamp(s*(a-dz)/span, -1, 1);
 }
-// 画面の回転角[deg]（縦持ち=0）。screen.orientation 優先、旧iOSは window.orientation（符号反転）
+// 画面が横向きか（iOSでも確実に効くCSSメディアクエリ）
+function isLandscape(){ return !!(window.matchMedia && window.matchMedia('(orientation: landscape)').matches); }
+// 画面の回転角[deg]（縦持ち=0）。iOSは screen.orientation.angle が常に0を返すことがあるため
+// window.orientation を優先し、最後に landscape 判定で整合性を補正する。
 function screenAngle(){
-  if(window.screen && screen.orientation && typeof screen.orientation.angle==='number') return screen.orientation.angle;
-  if(typeof window.orientation==='number') return -window.orientation;
-  return 0;
+  let a=null;
+  if(typeof window.orientation==='number') a = -window.orientation;                 // iOS: 0 / ±90 / 180
+  if(a===null && window.screen && screen.orientation && typeof screen.orientation.angle==='number') a = screen.orientation.angle;
+  if(a===null) a = 0;
+  a = ((a%360)+360)%360;
+  const land = isLandscape();
+  if(land && (a===0   || a===180)) a = 90;    // 横なのに角度が縦 → 90 に補正
+  if(!land && (a===90 || a===270)) a = 0;     // 縦なのに角度が横 → 0 に補正
+  return a;
 }
 // 端末基準の (beta=前後, gamma=左右) を、画面基準の {fb,lr} に回転変換
 function orient2screen(beta, gamma){
-  const a = (((screenAngle()%360)+360)%360) * Math.PI/180;
+  const a = screenAngle() * Math.PI/180;
   const c=Math.cos(a), s=Math.sin(a);
   return { lr: gamma*c + beta*s, fb: -gamma*s + beta*c };
+}
+function tiltDebug(e){   // URL末尾に #tiltdebug を付けると診断表示
+  if(location.hash.indexOf('tiltdebug')<0) return;
+  let d=document.getElementById('tiltdbg');
+  if(!d){ d=document.createElement('div'); d.id='tiltdbg';
+    d.style.cssText='position:fixed;left:8px;top:8px;z-index:9999;font:11px/1.5 monospace;color:#9effd0;background:rgba(0,0,0,.6);padding:6px 8px;border-radius:8px;pointer-events:none;white-space:pre';
+    document.body.appendChild(d); }
+  d.textContent='angle='+screenAngle()+'  landscape='+isLandscape()
+    +'\nwin.orientation='+window.orientation
+    +'\nscreen.angle='+((window.screen&&screen.orientation)?screen.orientation.angle:'n/a')
+    +'\nbeta='+(e?e.beta.toFixed(0):'-')+' gamma='+(e?e.gamma.toFixed(0):'-')
+    +'\ndevFB='+devFB.toFixed(0)+' devLR='+devLR.toFixed(0);
 }
 function onOrient(e){
   if(e.beta==null || e.gamma==null) return;
@@ -553,6 +574,7 @@ function onOrient(e){
   if(!tiltZero) tiltZero={lr:sf.lr, fb:sf.fb};           // ON にした瞬間の持ち方を中立に
   devLR = sf.lr - tiltZero.lr;
   devFB = sf.fb - tiltZero.fb;
+  tiltDebug(e);
 }
 function onScreenRotate(){ if(TILT_ON) tiltZero=null; }  // 回転したら中立を取り直す
 async function enableTilt(){
@@ -565,6 +587,7 @@ async function enableTilt(){
   tiltZero=null;
   window.addEventListener('deviceorientation', onOrient, true);
   window.addEventListener('orientationchange', onScreenRotate);
+  window.addEventListener('resize', onScreenRotate);
   if(window.screen && screen.orientation && screen.orientation.addEventListener)
     screen.orientation.addEventListener('change', onScreenRotate);
   TILT_ON=true; document.body.classList.add('tilt-on');
