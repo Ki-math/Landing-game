@@ -755,7 +755,7 @@ function hud(){
   const k=1.1; // m -> px 表示スケール
   let px=THREE.MathUtils.clamp(-S.pos.x*k, -100,100);
   let pz=THREE.MathUtils.clamp(-S.pos.z*k, -100,100);
-  pt.setAttribute('transform','translate('+px+','+(-pz)+')');
+  pt.setAttribute('transform','translate('+px+','+pz+')');
 
   // mode badge
   const mb=el('modebadge');
