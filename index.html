@@ -25,6 +25,13 @@
   .row .val{font-variant-numeric:tabular-nums; font-weight:500;}
   .val.alert{color:var(--bad);} .val.ok{color:var(--good);} .val.caution{color:var(--warn);}
 
+  .criteria{top:150px; right:14px; width:188px; padding:12px 14px; background:var(--panel);
+    border:1px solid var(--line); border-radius:10px; backdrop-filter:blur(6px);}
+  .criteria .ttl{font-size:10px; letter-spacing:.14em; color:var(--dim); margin-bottom:8px;}
+  .criteria .row{font-size:12px;}
+  .criteria .lbl{color:var(--dim);} .criteria .lbl b{color:var(--hud); font-weight:600;}
+  .cflag{font-weight:700; font-size:13px;} .cflag.ok{color:var(--good);} .cflag.bad{color:var(--bad);}
+
   .gauges{top:14px; right:14px; width:188px; padding:12px 14px; background:var(--panel);
     border:1px solid var(--line); border-radius:10px; backdrop-filter:blur(6px);}
   .gauge{margin-bottom:12px;}
@@ -137,6 +144,15 @@
     <div class="gl"><span>PROPELLANT</span><span class="gv" id="g-fuel">100%</span></div>
     <div class="bar fuel" id="bw-fuel"><i id="b-fuel"></i></div>
   </div>
+</div>
+
+<!-- Landing criteria -->
+<div class="hud criteria" id="crit">
+  <div class="ttl">着陸条件 SUCCESS CRITERIA</div>
+  <div class="row"><span class="lbl">中心からの距離 ≤<b id="c-rng">—</b> m</span><span class="cflag" id="f-rng">–</span></div>
+  <div class="row"><span class="lbl">降下速度 ≤<b id="c-vv">—</b> m/s</span><span class="cflag" id="f-vv">–</span></div>
+  <div class="row"><span class="lbl">横速度 ≤<b id="c-vh">—</b> m/s</span><span class="cflag" id="f-vh">–</span></div>
+  <div class="row"><span class="lbl">傾斜 ≤<b id="c-att">—</b> °</span><span class="cflag" id="f-att">–</span></div>
 </div>
 
 <!-- Pad reticle -->
@@ -825,6 +841,15 @@ function hud(){
   el('v-rng').textContent=fmt(rng)+' m';
   const wEl=el('v-wind'); wEl.textContent=fmt(S.curWind||0,1)+' m/s';
   wEl.className='val '+((S.curWind||0)>10?'caution':'');
+
+  // 着陸条件パネル（しきい値＋現在の充足状況）
+  const L=cfg.lim;
+  el('c-rng').textContent=cfg.padR; el('c-vv').textContent=L.vv; el('c-vh').textContent=L.vh; el('c-att').textContent=L.att;
+  const setFlag=(id,good)=>{ const e=el(id); e.textContent=good?'✓':'✗'; e.className='cflag '+(good?'ok':'bad'); };
+  setFlag('f-rng', rng<=cfg.padR);
+  setFlag('f-vv',  Math.abs(vv)<=L.vv);
+  setFlag('f-vh',  vh<=L.vh);
+  setFlag('f-att', att<=L.att);
 
   const thrP=Math.round(S.throttle*100);
   el('g-thr').textContent=thrP+'%'; el('b-thr').style.width=thrP+'%';
