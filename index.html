@@ -527,20 +527,34 @@ document.querySelectorAll('[data-k]').forEach(el=>{
 // ---- かんたんモード/傾き操作の設定（リセットをまたいで保持） ----
 let OPT_ASSIST=false;     // 推力おまかせ（オートスロットル）
 let TILT_ON=false;        // 端末の傾き(ジャイロ)で姿勢操作
-let devBeta=0, devGamma=0, tiltZero=null;
-const TILT_SIGN_X=+1, TILT_SIGN_Z=-1;   // 軸が逆なら符号を入れ替える
+let devFB=0, devLR=0, tiltZero=null;     // 画面基準の 前後(FB)/左右(LR) 傾き[deg]
+const TILT_SIGN_X=+1, TILT_SIGN_Z=-1;    // 軸が逆なら符号を入れ替える
 
 function tnorm(v, dz, span){              // デッドゾーン付き正規化 [-1,1]
   const s=Math.sign(v), a=Math.abs(v);
   if(a<=dz) return 0;
   return THREE.MathUtils.clamp(s*(a-dz)/span, -1, 1);
 }
+// 画面の回転角[deg]（縦持ち=0）。screen.orientation 優先、旧iOSは window.orientation（符号反転）
+function screenAngle(){
+  if(window.screen && screen.orientation && typeof screen.orientation.angle==='number') return screen.orientation.angle;
+  if(typeof window.orientation==='number') return -window.orientation;
+  return 0;
+}
+// 端末基準の (beta=前後, gamma=左右) を、画面基準の {fb,lr} に回転変換
+function orient2screen(beta, gamma){
+  const a = (((screenAngle()%360)+360)%360) * Math.PI/180;
+  const c=Math.cos(a), s=Math.sin(a);
+  return { lr: gamma*c + beta*s, fb: -gamma*s + beta*c };
+}
 function onOrient(e){
   if(e.beta==null || e.gamma==null) return;
-  if(!tiltZero) tiltZero={beta:e.beta, gamma:e.gamma};   // ON にした瞬間の持ち方を中立に
-  devBeta = e.beta - tiltZero.beta;
-  devGamma = e.gamma - tiltZero.gamma;
+  const sf = orient2screen(e.beta, e.gamma);             // 画面基準に変換
+  if(!tiltZero) tiltZero={lr:sf.lr, fb:sf.fb};           // ON にした瞬間の持ち方を中立に
+  devLR = sf.lr - tiltZero.lr;
+  devFB = sf.fb - tiltZero.fb;
 }
+function onScreenRotate(){ if(TILT_ON) tiltZero=null; }  // 回転したら中立を取り直す
 async function enableTilt(){
   const DOE = window.DeviceOrientationEvent;
   if(!DOE){ alert('この端末では傾きセンサーが使えないようです。'); return false; }
@@ -550,6 +564,9 @@ async function enableTilt(){
   }
   tiltZero=null;
   window.addEventListener('deviceorientation', onOrient, true);
+  window.addEventListener('orientationchange', onScreenRotate);
+  if(window.screen && screen.orientation && screen.orientation.addEventListener)
+    screen.orientation.addEventListener('change', onScreenRotate);
   TILT_ON=true; document.body.classList.add('tilt-on');
   return true;
 }
@@ -577,7 +594,7 @@ const vj={active:false, x:0, y:0};
 function readInput(){
   // 姿勢指令（アナログ）：傾き > ゲームパッド > 仮想スティック > キー の優先
   if(TILT_ON){
-    const g=tnorm(devGamma, 3, 22), b=tnorm(devBeta, 3, 22);
+    const g=tnorm(devLR, 3, 22), b=tnorm(devFB, 3, 22);   // 画面基準の左右/前後
     S.cmdZ = TILT_SIGN_Z * g * MAX_TILT;
     S.cmdX = TILT_SIGN_X * b * MAX_TILT;
   } else if(GP_ACTIVE && (gpLX||gpLY)){
