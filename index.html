@@ -207,7 +207,7 @@ const LEG = {Rb:1.85, HINGE_Y:3.0, HIGH_Y:8.2, Lm:8.5, thetaStow:3.00, thetaDep:
 const FOOT_DROP = -(LEG.HINGE_Y - LEG.Lm*Math.cos(LEG.thetaDep)); // ≈1.95: 展開脚先が機体ベースより下に出る量
 
 const DIFF = {
-  easy:   {label:'EASY',   alt:340, vdown:16, off:38,  hvel:6,  fuel:100, wind:3,  padR:14, lim:{vv:8, vh:6, att:10}},
+  easy:   {label:'EASY',   alt:340, vdown:16, off:38,  hvel:6,  fuel:100, wind:3,  padR:24, lim:{vv:10, vh:10, att:16}},
   normal: {label:'NORMAL', alt:470, vdown:28, off:85,  hvel:10, fuel:84,  wind:8,  padR:10, lim:{vv:6, vh:4, att:7}},
   hard:   {label:'HARD',   alt:600, vdown:40, off:135, hvel:14, fuel:62,  wind:16, padR:8,  lim:{vv:5, vh:3, att:5}},
 };
