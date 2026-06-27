@@ -172,7 +172,7 @@
 <div class="hud modebadge" id="modebadge"><span class="dot"></span><span id="mode-txt">MANUAL</span><span class="sub" id="mode-sub"></span></div>
 
 <div class="hud hint">
-  <b>↑↓←→</b> 姿勢 &nbsp;·&nbsp; <b>W/S</b> スロットル &nbsp;·&nbsp; <b>Space</b> 全開 &nbsp;·&nbsp; <b>X</b> 停止 &nbsp;·&nbsp; <b>G</b> Auto Land &nbsp;·&nbsp; <b>C</b> 視点 &nbsp;·&nbsp; <b>R</b> やり直し &nbsp;·&nbsp; 🎮 <b>左スティック</b>姿勢/<b>RT</b>推力
+  <b>↑↓←→</b> 姿勢 &nbsp;·&nbsp; <b>W/S</b> スロットル &nbsp;·&nbsp; <b>Space</b> 全開 &nbsp;·&nbsp; <b>X</b> 停止 &nbsp;·&nbsp; <b>G</b> Auto Land &nbsp;·&nbsp; <b>T</b> 目標軌道 &nbsp;·&nbsp; <b>C</b> 視点 &nbsp;·&nbsp; <b>R</b> やり直し &nbsp;·&nbsp; 🎮 <b>左スティック</b>姿勢/<b>RT</b>推力
 </div>
 
 <!-- Touch controls -->
@@ -233,6 +233,8 @@ const DIFF = {
 // ============================================================
 let renderer, scene, camera;
 let rocket, legs=[], plume, plumeCore, plumeLight, deckMesh;
+let guideGroup=null, gateRings=[], deckCircle=null, glidePath=null, GUIDE_ON=true;
+const GUIDE_ALTS=[60,150,260,380];   // グライドコリドーのゲート高度[m]
 let sun;
 const particles=[];
 
@@ -434,6 +436,9 @@ function init(){
   });
   scene.add(barge);
 
+  // 着陸ガイド（目標サークル・グライドコリドー・目標軌道）
+  guideGroup=buildGuide(); scene.add(guideGroup);
+
   // rocket
   rocket=buildRocket(); scene.add(rocket);
 
@@ -480,6 +485,8 @@ function resetGame(key, auto){
   hideScreen();
   document.body.classList.toggle('touch-on', isTouch);
   document.body.classList.toggle('assist-on', OPT_ASSIST);
+  updateGuideRadius(cfg.padR);
+  if(guideGroup) guideGroup.visible=GUIDE_ON;
   lastT=performance.now();
 }
 
@@ -497,6 +504,7 @@ window.addEventListener('keydown',e=>{
   if(k==='r'||k==='R'){ if(state!=='menu') resetGame(currentKey, currentAuto); }
   if(k==='c'||k==='C'){ camMode=(camMode+1)%2; }
   if(k==='g'||k==='G'){ if(state==='playing'){ S.auto=!S.auto; if(S.auto){S.cmdX=0;S.cmdZ=0;} } }
+  if(k==='t'||k==='T'){ GUIDE_ON=!GUIDE_ON; if(guideGroup) guideGroup.visible=GUIDE_ON; }
 });
 window.addEventListener('keyup',e=>{
   const k=e.key;
@@ -787,10 +795,70 @@ function updateLegs(){
   }
 }
 
+// ============================================================
+//  着陸ガイド（グライドスロープ／目標軌道）
+// ============================================================
+function buildGuide(){
+  const g=new THREE.Group();
+  // 着陸目標サークル（甲板上の許容半径）
+  deckCircle=new THREE.Mesh(new THREE.TorusGeometry(14,0.6,8,64),
+    new THREE.MeshBasicMaterial({color:0x4dffa0, transparent:true, opacity:0.95}));
+  deckCircle.rotation.x=Math.PI/2; deckCircle.position.y=0.12; g.add(deckCircle);
+  // グライド・コリドー（降下ゲートリングの漏斗）
+  gateRings=[];
+  GUIDE_ALTS.forEach(a=>{
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(1,0.5,6,48),
+      new THREE.MeshBasicMaterial({color:0x6fe0ff, transparent:true, opacity:0.45}));
+    ring.rotation.x=Math.PI/2; ring.position.y=FOOT_DROP+a; ring.userData.alt=a;
+    g.add(ring); gateRings.push(ring);
+  });
+  // 中心軸ビーム（最終垂直降下の目印）
+  const topA=GUIDE_ALTS[GUIDE_ALTS.length-1];
+  const beam=new THREE.Mesh(new THREE.CylinderGeometry(0.35,0.35,topA,8,1,true),
+    new THREE.MeshBasicMaterial({color:0x4dffa0, transparent:true, opacity:0.14, side:THREE.DoubleSide}));
+  beam.position.y=FOOT_DROP+topA/2; g.add(beam);
+  // 目標軌道（動的ライン）
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(40*3),3));
+  glidePath=new THREE.Line(geo, new THREE.LineBasicMaterial({color:0x9dff5d, transparent:true, opacity:0.95}));
+  glidePath.frustumCulled=false; g.add(glidePath);
+
+  g.visible=GUIDE_ON;
+  return g;
+}
+function updateGuideRadius(padR){
+  if(!deckCircle) return;
+  deckCircle.geometry.dispose();
+  deckCircle.geometry=new THREE.TorusGeometry(padR,0.6,8,64);
+  const tan=0.32;   // コリドー半角 ≈18°
+  gateRings.forEach(r=>{
+    r.geometry.dispose();
+    r.geometry=new THREE.TorusGeometry(padR + r.userData.alt*tan, 0.5, 6, 48);
+  });
+}
+function updateGuidePath(){
+  if(!glidePath || !S.pos) return;
+  // 通過済みのゲートリングを淡色化
+  for(const r of gateRings) r.material.opacity = (S.pos.y-FOOT_DROP) < r.userData.alt ? 0.12 : 0.5;
+  const N=39, arr=glidePath.geometry.attributes.position.array;
+  const curAlt=Math.max(S.pos.y-FOOT_DROP, 0.1);
+  for(let i=0;i<=N;i++){
+    const h=curAlt*(1-i/N);            // 現在高度→0
+    const f=Math.pow(h/curAlt, 1.6);   // 水平は接地前に中心軸へ収束
+    arr[i*3]=S.pos.x*f; arr[i*3+1]=FOOT_DROP+h; arr[i*3+2]=S.pos.z*f;
+  }
+  glidePath.geometry.setDrawRange(0, N+1);
+  glidePath.geometry.attributes.position.needsUpdate=true;
+  glidePath.geometry.computeBoundingSphere();
+}
+
 function visualUpdate(dt){
   rocket.position.copy(S.pos);
   rocket.rotation.set(0,0,0);
   rocket.rotateZ(S.tz); rocket.rotateX(S.tx);
+
+  // 着陸ガイド（目標軌道）の更新
+  updateGuidePath();
 
   // legs（Aフレームを毎フレーム配置）
   updateLegs();
