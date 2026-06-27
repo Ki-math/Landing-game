@@ -68,6 +68,8 @@
   .thr-btn small{font-size:9px; color:var(--dim);}
   body.touch-on .touch{display:block;}
   body.touch-on .hint{display:none;}
+  body.tilt-on .touch.left{display:none;}      /* 傾き操作時は方向パッド不要 */
+  body.assist-on .touch.right{display:none;}    /* 推力おまかせ時はスロットル不要 */
 
   /* ---------- overlays ---------- */
   .screen{position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
@@ -84,6 +86,7 @@
   .diff button{font-family:var(--mono); cursor:pointer; padding:13px 8px; border-radius:11px; background:rgba(255,255,255,.04);
     border:1px solid var(--line); color:var(--hud); transition:.15s;}
   .diff button:hover{background:rgba(120,200,255,.14); border-color:rgba(120,200,255,.5);}
+  .diff button.active{background:rgba(93,255,160,.16); border-color:rgba(93,255,160,.6); color:var(--good);}
   .diff .dn{font-size:14px; font-weight:600; display:block;}
   .diff .dd{font-size:10px; color:var(--dim); display:block; margin-top:4px; line-height:1.4;}
   .stats{display:grid; grid-template-columns:1fr 1fr; gap:8px 22px; margin:0 0 22px; font-size:13px;}
@@ -453,6 +456,8 @@ function resetGame(key, auto){
   state='playing';
   hideScreen();
   document.body.classList.toggle('touch-on', isTouch);
+  document.body.classList.toggle('assist-on', OPT_ASSIST);
+  document.body.classList.toggle('tilt-on', TILT_ON);
   lastT=performance.now();
 }
 
@@ -487,17 +492,67 @@ document.querySelectorAll('[data-k]').forEach(el=>{
   el.addEventListener('mousedown',dn); el.addEventListener('mouseup',up); el.addEventListener('mouseleave',up);
 });
 
+// ---- かんたんモード/傾き操作の設定（リセットをまたいで保持） ----
+let OPT_ASSIST=false;     // 推力おまかせ（オートスロットル）
+let TILT_ON=false;        // 端末の傾き(ジャイロ)で姿勢操作
+let devBeta=0, devGamma=0, tiltZero=null;
+const TILT_SIGN_X=+1, TILT_SIGN_Z=-1;   // 軸が逆なら符号を入れ替える
+
+function tnorm(v, dz, span){              // デッドゾーン付き正規化 [-1,1]
+  const s=Math.sign(v), a=Math.abs(v);
+  if(a<=dz) return 0;
+  return THREE.MathUtils.clamp(s*(a-dz)/span, -1, 1);
+}
+function onOrient(e){
+  if(e.beta==null || e.gamma==null) return;
+  if(!tiltZero) tiltZero={beta:e.beta, gamma:e.gamma};   // ON にした瞬間の持ち方を中立に
+  devBeta = e.beta - tiltZero.beta;
+  devGamma = e.gamma - tiltZero.gamma;
+}
+async function enableTilt(){
+  const DOE = window.DeviceOrientationEvent;
+  if(!DOE){ alert('この端末では傾きセンサーが使えないようです。'); return false; }
+  if(typeof DOE.requestPermission === 'function'){   // iOS 13+ は許可が必要
+    try{ const r=await DOE.requestPermission(); if(r!=='granted'){ alert('傾き操作が許可されませんでした。Safari の設定で「モーションと画面の向きへのアクセス」を許可してください。'); return false; } }
+    catch(err){ alert('傾き操作を有効にできませんでした。'); return false; }
+  }
+  tiltZero=null;
+  window.addEventListener('deviceorientation', onOrient, true);
+  TILT_ON=true; document.body.classList.add('tilt-on');
+  return true;
+}
+function recenterTilt(){ tiltZero=null; }   // 今の持ち方を中立に取り直す
+
 function readInput(){
   // 姿勢指令：傾けた向きに移動するようマッピング
-  S.cmdZ = (keys['ArrowLeft']||keys['a'] ? MAX_TILT : 0) + (keys['ArrowRight']||keys['d'] ? -MAX_TILT : 0);
-  S.cmdX = (keys['ArrowUp'] ? -MAX_TILT : 0) + (keys['ArrowDown'] ? MAX_TILT : 0);
-  // スロットル
+  if(TILT_ON){
+    const g=tnorm(devGamma, 3, 22), b=tnorm(devBeta, 3, 22);
+    S.cmdZ = TILT_SIGN_Z * g * MAX_TILT;   // 端末を左右に傾け→左右へ
+    S.cmdX = TILT_SIGN_X * b * MAX_TILT;   // 端末を前後に傾け→前後へ
+  } else {
+    S.cmdZ = (keys['ArrowLeft']||keys['a'] ? MAX_TILT : 0) + (keys['ArrowRight']||keys['d'] ? -MAX_TILT : 0);
+    S.cmdX = (keys['ArrowUp'] ? -MAX_TILT : 0) + (keys['ArrowDown'] ? MAX_TILT : 0);
+  }
+  // スロットル（おまかせモードのときは後段の autoThrottle() で上書き）
   if(keys['Space']) S.throttle=1;
   else if(keys['x']) S.throttle=0;
   else {
     if(keys['w']) S.throttle=Math.min(1,S.throttle+1.4*PHYS_DT);
     if(keys['s']) S.throttle=Math.max(0,S.throttle-1.4*PHYS_DT);
   }
+}
+
+// 推力おまかせ：現在の傾きのまま、安全な降下プロファイルになるよう throttle を自動調整
+function autoThrottle(){
+  const clr=Math.max(0, S.pos.y - FOOT_DROP), vz=S.vel.y, dist=Math.hypot(S.pos.x,S.pos.z);
+  const aDc=8.5, hf=1.5, vtd=1.0, vCap=40, Kv=3.0;
+  const capEff=THREE.MathUtils.clamp(vCap*(1 - THREE.MathUtils.clamp((dist-12)/45,0,1)*0.5), 7, vCap);
+  const vzt=-Math.min(capEff, Math.sqrt(2*aDc*Math.max(clr-hf,0)) + vtd);
+  const aZff=(vz<0 && clr>hf) ? aDc : 0;
+  const aZ=aZff + Kv*(vzt - vz);
+  const upy=Math.max(bodyUp(S.tx,S.tz).y, 0.3);      // 機体の傾きを考慮して垂直推力を確保
+  S.throttle=THREE.MathUtils.clamp((aZ+G)/(A_MAX*upy), 0, 1);
+  S.gv=vzt;
 }
 
 function bodyUp(tx,tz){
@@ -549,7 +604,7 @@ function guidanceGFOLD(){
 function physics(dt){
   if(S.landed) return;
   if(S.auto) guidanceGFOLD();
-  else readInput();
+  else { readInput(); if(OPT_ASSIST) autoThrottle(); }
 
   // 姿勢内ループ（2次系トラッキング: グリッドフィン/RCSによる安定化を抽象化）
   const aX = ATT_WN*ATT_WN*(S.cmdX - S.tx) - 2*ATT_Z*ATT_WN*S.wx;
@@ -761,6 +816,8 @@ function hud(){
   const mb=el('modebadge');
   let on=false, txt='MANUAL', sub='[G] Auto Land';
   if(S.auto){ on=true; txt='AUTO LAND'; sub='ブラウザ内誘導 vz*='+fmt(S.gv||0,1); }
+  else if(OPT_ASSIST){ on=true; txt='かんたん'; sub=(TILT_ON?'傾きで操縦':'キーで操縦')+'・推力おまかせ'; }
+  else if(TILT_ON){ txt='MANUAL'; sub='傾きで操縦'; }
   mb.classList.toggle('auto', on);
   el('mode-txt').textContent=txt;
   el('mode-sub').textContent=sub;
@@ -784,6 +841,10 @@ function menuHTML(){
     <button data-d="normal"><span class="dn">NORMAL</span><span class="dd">中風・標準燃料<br>標準判定</span></button>
     <button data-d="hard"><span class="dn">HARD</span><span class="dd">強風・少燃料<br>厳しい判定</span></button>
   </div>
+  <div class="diff" style="grid-template-columns:1fr 1fr; margin-top:8px;">
+    <button id="opt-assist" type="button"><span class="dn">🧒 推力おまかせ</span><span class="dd" id="opt-assist-st">OFF（傾けて操縦するだけ）</span></button>
+    <button id="opt-tilt" type="button"><span class="dn">📱 傾きで操縦</span><span class="dd" id="opt-tilt-st">OFF（スマホ/iPad）</span></button>
+  </div>
   <div class="ctrlkey">
     <b>操作</b><br>
     <span class="k">↑</span><span class="k">↓</span><span class="k">←</span><span class="k">→</span> 姿勢（傾けた向きへ移動・離すと復元）　
@@ -792,7 +853,9 @@ function menuHTML(){
   </div>
   <button class="btn" id="autodemo" style="margin-top:6px; background:rgba(93,255,160,.14); border:1px solid rgba(93,255,160,.5); color:var(--good);">▶ Auto Land 自動着陸（NORMAL・ブラウザ内）</button>
   <p class="note">物理は実機を意識したモデルですが操作性のため簡略化しています（推力加速度ベース・連続スロットル0–100%・ホバー≈45%、姿勢は2次系の内ループでトラッキング）。風はゆっくり変動する一定風＋突風として横加速度に作用します。<br>
-  <b>Auto Land（<span class="k">G</span>）</b>：ブラウザ内のフィードバック自動着陸器。垂直＝高度–速度プロファイル、水平＝ZEM風PD＋風FF。手動でもプレイできます。</p>`;
+  <b>🧒 推力おまかせ</b>：スロットルを自動制御。プレイヤーは傾けて左右前後に動かすだけ。お子さま向け。<br>
+  <b>📱 傾きで操縦</b>：スマホ/iPad本体を傾けて姿勢を操作（ONにした瞬間の持ち方が中立になります）。iOSは初回に許可が必要です。※左右や前後が逆に感じたら教えてください。<br>
+  <b>Auto Land（<span class="k">G</span>）</b>：ブラウザ内のフィードバック自動着陸器（完全自動）。</p>`;
 }
 function resultHTML(ok){
   const f=S._final||{vv:0,vh:0,att:0,rng:0};
@@ -819,10 +882,25 @@ function showResult(ok){
 }
 function showMenu(){
   state='menu'; card.innerHTML=menuHTML(); showScreen();
-  document.querySelectorAll('.diff button').forEach(b=>{
+  document.querySelectorAll('.diff button[data-d]').forEach(b=>{
     b.onclick=()=>{ resetGame(b.getAttribute('data-d'), false); };
   });
   el('autodemo').onclick=()=>resetGame('normal', true);
+
+  // オプション：状態表示を更新
+  function refreshOpts(){
+    const a=el('opt-assist'), t=el('opt-tilt');
+    a.classList.toggle('active', OPT_ASSIST);
+    t.classList.toggle('active', TILT_ON);
+    el('opt-assist-st').textContent = OPT_ASSIST ? 'ON（推力は自動・傾けるだけ）' : 'OFF（傾けて操縦するだけ）';
+    el('opt-tilt-st').textContent   = TILT_ON   ? 'ON（端末を傾けて操作）'       : 'OFF（スマホ/iPad）';
+  }
+  el('opt-assist').onclick=()=>{ OPT_ASSIST=!OPT_ASSIST; refreshOpts(); };
+  el('opt-tilt').onclick=async ()=>{
+    if(TILT_ON){ TILT_ON=false; document.body.classList.remove('tilt-on'); refreshOpts(); }
+    else { await enableTilt(); refreshOpts(); }
+  };
+  refreshOpts();
 }
 
 // ============================================================
