@@ -172,7 +172,7 @@
 <div class="hud modebadge" id="modebadge"><span class="dot"></span><span id="mode-txt">MANUAL</span><span class="sub" id="mode-sub"></span></div>
 
 <div class="hud hint">
-  <b>↑↓←→</b> 姿勢 &nbsp;·&nbsp; <b>W/S</b> スロットル &nbsp;·&nbsp; <b>Space</b> 全開 &nbsp;·&nbsp; <b>X</b> 停止 &nbsp;·&nbsp; <b>G</b> Auto Land &nbsp;·&nbsp; <b>T</b> 目標軌道 &nbsp;·&nbsp; <b>C</b> 視点 &nbsp;·&nbsp; <b>R</b> やり直し &nbsp;·&nbsp; 🎮 <b>左スティック</b>姿勢/<b>RT</b>推力
+  <b>↑↓←→</b> 姿勢 &nbsp;·&nbsp; <b>W/S</b> スロットル &nbsp;·&nbsp; <b>Space</b> 全開 &nbsp;·&nbsp; <b>X</b> 停止 &nbsp;·&nbsp; <b>G</b> Auto Land &nbsp;·&nbsp; <b>T</b> 目標軌道 &nbsp;·&nbsp; <b>Y</b> 横移動補助 &nbsp;·&nbsp; <b>C</b> 視点 &nbsp;·&nbsp; <b>R</b> やり直し &nbsp;·&nbsp; 🎮 <b>左スティック</b>姿勢/<b>RT</b>推力
 </div>
 
 <!-- Touch controls -->
@@ -211,8 +211,9 @@
 const G = 9.81;            // 重力加速度 [m/s^2]
 const A_MAX = 22.0;        // 全開時の推力加速度 [m/s^2] (ホバー≈45%)
 const BURN_FULL = 3.4;     // 全開時の推進剤消費 [%/s]
-const MAX_TILT = 0.28;     // 指令最大傾斜角 [rad] ≈16deg
-const ATT_WN = 2.7;        // 姿勢内ループ固有角周波数 [rad/s]
+const MAX_TILT = 0.32;     // 指令最大傾斜角 [rad] ≈18deg
+const ATT_WN = 4.0;        // 姿勢内ループ固有角周波数 [rad/s]（応答を速く）
+const TRANS_BOOST = 0.22;  // マニュアル横移動アシストのスロットル上乗せ量
 const ATT_Z  = 0.92;       // 姿勢内ループ減衰比
 const WIND_K = 0.10;       // 風→横加速度ゲイン
 const PHYS_DT = 1/120;     // 物理サブステップ
@@ -505,6 +506,7 @@ window.addEventListener('keydown',e=>{
   if(k==='c'||k==='C'){ camMode=(camMode+1)%2; }
   if(k==='g'||k==='G'){ if(state==='playing'){ S.auto=!S.auto; if(S.auto){S.cmdX=0;S.cmdZ=0;} } }
   if(k==='t'||k==='T'){ GUIDE_ON=!GUIDE_ON; if(guideGroup) guideGroup.visible=GUIDE_ON; }
+  if(k==='y'||k==='Y'){ TRANS_ASSIST=!TRANS_ASSIST; }
 });
 window.addEventListener('keyup',e=>{
   const k=e.key;
@@ -548,6 +550,7 @@ document.querySelectorAll('[data-k]').forEach(el=>{
 
 // ---- かんたんモード設定（リセットをまたいで保持） ----
 let OPT_ASSIST=false;     // 推力おまかせ（オートスロットル）
+let TRANS_ASSIST=true;    // マニュアル横移動アシスト（傾けたらスロットル底上げ）
 
 // ---- ゲームパッド ----
 let GP_ACTIVE=false, gpLX=0, gpLY=0, gpThr=0, gpFull=false, gpCut=false, gpRestart=false;
@@ -606,6 +609,18 @@ function autoThrottle(){
   S.gv=vzt;
 }
 
+// マニュアル横移動アシスト：傾けている間だけスロットルを底上げして横推力を確保。
+//  need = (この姿勢で高度維持に要る分) + (傾きに比例したブースト)
+//  プレイヤーがそれ以上出していればそのまま尊重（上書きしない）。
+function tiltThrottleAssist(){
+  const tiltMag=Math.hypot(S.tx, S.tz);
+  if(tiltMag < 0.02) return;                          // ほぼ直立なら何もしない（降下を妨げない）
+  const upy=Math.max(bodyUp(S.tx,S.tz).y, 0.3);
+  const hover=G/(A_MAX*upy);                          // この姿勢で高度を保つのに要るスロットル
+  const need=THREE.MathUtils.clamp(hover + TRANS_BOOST*(tiltMag/MAX_TILT), 0, 1);
+  if(S.throttle < need) S.throttle = need;
+}
+
 function bodyUp(tx,tz){
   // up = Rz(tz)*Rx(tx)*(0,1,0)
   const cx=Math.cos(tx), sx=Math.sin(tx), cz=Math.cos(tz), sz=Math.sin(tz);
@@ -655,7 +670,7 @@ function guidanceGFOLD(){
 function physics(dt){
   if(S.landed) return;
   if(S.auto) guidanceGFOLD();
-  else { readInput(); if(OPT_ASSIST) autoThrottle(); }
+  else { readInput(); if(OPT_ASSIST) autoThrottle(); else if(TRANS_ASSIST) tiltThrottleAssist(); }
 
   // 姿勢内ループ（2次系トラッキング: グリッドフィン/RCSによる安定化を抽象化）
   const aX = ATT_WN*ATT_WN*(S.cmdX - S.tx) - 2*ATT_Z*ATT_WN*S.wx;
@@ -935,7 +950,7 @@ function hud(){
   // mode badge
   const mb=el('modebadge');
   let on=false, txt='MANUAL', sub='[G] Auto Land';
-  if(S.auto){ on=true; txt='AUTO LAND'; sub='誘導制御ON vz*='+fmt(S.gv||0,1); }
+  if(S.auto){ on=true; txt='AUTO LAND'; sub='ブラウザ内誘導 vz*='+fmt(S.gv||0,1); }
   else if(OPT_ASSIST){ on=true; txt='かんたん'; sub='推力おまかせ'; }
   mb.classList.toggle('auto', on);
   el('mode-txt').textContent=txt;
@@ -961,7 +976,7 @@ function menuHTML(){
     <button data-d="hard"><span class="dn">HARD</span><span class="dd">強風・少燃料<br>厳しい判定</span></button>
   </div>
   <div class="diff" style="grid-template-columns:1fr; margin-top:8px;">
-    <button id="opt-assist" type="button"><span class="dn">🔥 推力おまかせ（かんたん）</span><span class="dd" id="opt-assist-st">OFF（推力も自分で操作）</span></button>
+    <button id="opt-assist" type="button"><span class="dn">🧒 推力おまかせ（かんたん）</span><span class="dd" id="opt-assist-st">OFF（推力も自分で操作）</span></button>
   </div>
   <div class="ctrlkey">
     <b>操作</b><br>
@@ -972,8 +987,8 @@ function menuHTML(){
   </div>
   <button class="btn" id="autodemo" style="margin-top:6px; background:rgba(93,255,160,.14); border:1px solid rgba(93,255,160,.5); color:var(--good);">▶ Auto Land 自動着陸（NORMAL・ブラウザ内）</button>
   <p class="note">物理は実機を意識したモデルですが操作性のため簡略化しています（推力加速度ベース・連続スロットル0–100%・ホバー≈45%、姿勢は2次系の内ループでトラッキング）。風はゆっくり変動する一定風＋突風として横加速度に作用します。<br>
-  <b>🔥 推力おまかせ</b>：スロットルを自動制御。プレイヤーは左右前後に動かすだけ。<br>
-  <b>🤖 Auto Land（<span class="k">G</span>）</b>：自動着陸（完全自動）。</p>`;
+  <b>🧒 推力おまかせ</b>：スロットルを自動制御。プレイヤーは左右前後に動かすだけ。お子さま向け。<br>
+  <b>Auto Land（<span class="k">G</span>）</b>：ブラウザ内のフィードバック自動着陸器（完全自動）。</p>`;
 }
 function resultHTML(ok){
   const f=S._final||{vv:0,vh:0,att:0,rng:0};
