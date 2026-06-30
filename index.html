@@ -59,6 +59,14 @@
     cursor:pointer; backdrop-filter:blur(6px); white-space:nowrap;}
   .modebadge .dot{display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--dim); margin-right:8px; vertical-align:middle;}
   .modebadge.auto{border-color:rgba(93,255,160,.55); color:var(--good);}
+
+  .toast{position:absolute; top:64px; left:50%; transform:translateX(-50%) translateY(-6px);
+    padding:8px 18px; background:rgba(8,14,22,.92); border:1px solid rgba(120,200,255,.5);
+    border-radius:20px; font-size:14px; font-weight:600; letter-spacing:.04em; color:var(--hud);
+    white-space:nowrap; pointer-events:none; opacity:0; transition:opacity .18s, transform .18s; z-index:40;}
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(0);}
+  .toast.on{border-color:rgba(93,255,160,.7); color:var(--good);}
+  .toast.off{border-color:rgba(255,120,120,.6); color:#ff9b9b;}
   .modebadge.auto .dot{background:var(--good); box-shadow:0 0 8px var(--good);}
   .modebadge .sub{color:var(--dim); margin-left:8px; letter-spacing:.04em;}
 
@@ -170,6 +178,8 @@
 </div>
 
 <div class="hud modebadge" id="modebadge"><span class="dot"></span><span id="mode-txt">MANUAL</span><span class="sub" id="mode-sub"></span></div>
+
+<div id="toast" class="toast"></div>
 
 <div class="hud hint">
   <b>↑↓←→</b> 姿勢 &nbsp;·&nbsp; <b>W/S</b> スロットル &nbsp;·&nbsp; <b>Space</b> 全開 &nbsp;·&nbsp; <b>X</b> 停止 &nbsp;·&nbsp; <b>G</b> Auto Land &nbsp;·&nbsp; <b>T</b> 目標軌道 &nbsp;·&nbsp; <b>Y</b> 横移動補助 &nbsp;·&nbsp; <b>C</b> 視点 &nbsp;·&nbsp; <b>R</b> やり直し &nbsp;·&nbsp; 🎮 <b>左スティック</b>姿勢/<b>RT</b>推力
@@ -497,6 +507,15 @@ const isTouch=('ontouchstart' in window)||navigator.maxTouchPoints>0;
 function keyDown(k){ keys[k]=true; }
 function keyUp(k){ keys[k]=false; }
 
+let _toastTimer=null;
+function toast(msg, kind){   // 画面中央上に短く通知
+  const t=document.getElementById('toast'); if(!t) return;
+  t.textContent=msg;
+  t.className='toast show'+(kind?(' '+kind):'');
+  clearTimeout(_toastTimer);
+  _toastTimer=setTimeout(()=>{ t.className='toast'+(kind?(' '+kind):''); }, 1100);
+}
+
 window.addEventListener('keydown',e=>{
   const k=e.key;
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(k)) e.preventDefault();
@@ -504,9 +523,9 @@ window.addEventListener('keydown',e=>{
   if(k.length===1){ keyDown(k.toLowerCase()); } else { keyDown(k); }
   if(k==='r'||k==='R'){ if(state!=='menu') resetGame(currentKey, currentAuto); }
   if(k==='c'||k==='C'){ camMode=(camMode+1)%2; }
-  if(k==='g'||k==='G'){ if(state==='playing'){ S.auto=!S.auto; if(S.auto){S.cmdX=0;S.cmdZ=0;} } }
-  if(k==='t'||k==='T'){ GUIDE_ON=!GUIDE_ON; if(guideGroup) guideGroup.visible=GUIDE_ON; }
-  if(k==='y'||k==='Y'){ TRANS_ASSIST=!TRANS_ASSIST; }
+  if(k==='g'||k==='G'){ if(state==='playing'){ S.auto=!S.auto; if(S.auto){S.cmdX=0;S.cmdZ=0;} toast(S.auto?'Auto Land: ON':'Auto Land: OFF', S.auto?'on':'off'); } }
+  if(k==='t'||k==='T'){ GUIDE_ON=!GUIDE_ON; if(guideGroup) guideGroup.visible=GUIDE_ON; toast(GUIDE_ON?'目標軌道: ON':'目標軌道: OFF', GUIDE_ON?'on':'off'); }
+  if(k==='y'||k==='Y'){ TRANS_ASSIST=!TRANS_ASSIST; toast(TRANS_ASSIST?'横移動補助: ON':'横移動補助: OFF', TRANS_ASSIST?'on':'off'); }
 });
 window.addEventListener('keyup',e=>{
   const k=e.key;
